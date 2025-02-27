@@ -1,8 +1,8 @@
 <h1 align="center"> UXAgent: An LLM-Powered Usability Testing Framework for Web Design </h1>
 
 <p align="center">
-    <a href="https://arxiv.org/abs/xxxx.xxxx">
-        <img src="https://img.shields.io/badge/arXiv-xxxx.xxxx-B31B1B.svg?style=plastic&logo=arxiv" alt="arXiv">
+    <a href="https://arxiv.org/abs/2502.12561">
+        <img src="https://img.shields.io/badge/arXiv-2502.12561-B31B1B.svg?style=plastic&logo=arxiv" alt="arXiv">
     </a>
     <a href="https://opensource.org/licenses/MIT">
         <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=plastic" alt="License: MIT">
@@ -177,3 +177,15 @@ Generated personas will be saved in the specified `output_dir` as `.json` and `.
 
 ## License
 This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+
+## Citation
+```bibtex
+@misc{lu2025uxagent,
+    title={UXAgent: An LLM Agent-Based Usability Testing Framework for Web Design},
+    author={Yuxuan Lu and Bingsheng Yao and Hansu Gu and Jing Huang and Jessie Wang and Laurence Li and Jiri Gesi and Qi He and Toby Jia-Jun Li and Dakuo Wang},
+    year={2025},
+    eprint={2502.12561},
+    archivePrefix={arXiv},
+    primaryClass={cs.HC}
+}
+```
