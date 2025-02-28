@@ -1,4 +1,4 @@
-<h1 align="center"> UXAgent: An LLM Agent-Based Usability Testing Framework for Web Design </h1>
+<h1 align="center"> [CHI'25 LBW Accepted] UXAgent: An LLM Agent-Based Usability Testing Framework for Web Design </h1>
 
 <p align="center">
     <a href="https://arxiv.org/abs/2502.12561">
