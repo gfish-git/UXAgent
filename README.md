@@ -26,6 +26,16 @@ Yuxuan Lu, Bingsheng Yao, Hansu Gu, Jing Huang, Jessie Wang, Laurence Li, Haiyan
 
 The system leverages dual-system reasoning for quick decisions and in-depth analysis, and its **Universal Web Connector** ensures compatibility with any web page. By offering real-time feedback, UXAgent streamlines the design process and improves testing efficiency.
 
+[![Button Click]][Link] 
+
+<p align="center">
+    <a href="https://uxagent.hailab.io/"> 
+        <img src="https://img.shields.io/badge/Live_Demo-37a779?style=for-the-badge">
+    </a>
+    <a href="https://huggingface.co/datasets/NEU-HAI/UXAgent"> 
+        <img src="https://img.shields.io/badge/Data-37a779?style=for-the-badge">
+    </a>
+</p>
 
 https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
 
