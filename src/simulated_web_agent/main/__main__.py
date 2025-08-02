@@ -19,12 +19,31 @@ from selenium.webdriver.common.keys import Keys
 
 from ..agent.gpt import chat
 from ..agent import gpt
-from ..executor import amazon_recipes, google_flights_recipes, onestopshop_recipes
+from ..executor import amazon_recipes, google_flights_recipes, onestopshop_recipes, bruvi_recipes
 from ..executor.env import (
     Browser,  # noqa
     SeleniumEnv,  # noqa
 )
 from .model import AgentPolicy, HumanPolicy, OpenAIPolicy  # noqa  # noqa
+
+# Website configurations
+WEBSITE_CONFIGS = {
+    "amazon": {
+        "start_url": "https://www.amazon.com",
+        "recipes": amazon_recipes.recipes,
+        "solve_captcha": True,
+    },
+    "bruvi": {
+        "start_url": "https://bruvi.com",
+        "recipes": bruvi_recipes.recipes,
+        "solve_captcha": False,
+    },
+    "google_flights": {
+        "start_url": "https://www.google.com/flights",
+        "recipes": google_flights_recipes.recipes,
+        "solve_captcha": False,
+    },
+}
 
 
 def make_sync(func):
@@ -124,6 +143,12 @@ def stop_recording(result=None):
     help="Record the run.",
 )
 @click.option("--llm-provider", type=click.Choice(["openai", "aws"]), default="aws")
+@click.option(
+    "--website",
+    type=click.Choice(["amazon", "bruvi", "google_flights"]),
+    default="amazon",
+    help="Which ecommerce website to test (amazon, bruvi, or google_flights)"
+)
 @make_sync
 async def main(
     persona: str,
@@ -132,7 +157,9 @@ async def main(
     cookie: tuple[str, str],
     record: bool,
     llm_provider: str,
+    website: str,
 ):
+
     load_dotenv()
     logging.basicConfig()
     loggers = [
@@ -143,21 +170,24 @@ async def main(
     for logger in loggers:
         logger.setLevel(logging.INFO)
     gpt.provider = llm_provider
+
     persona_info = json.load(open(persona))
     persona = persona_info["persona"]
     intent = persona_info["intent"]
+
     policy = AgentPolicy(persona, intent, output)
+
+    # Get website configuration
+    website_config = WEBSITE_CONFIGS[website]
 
     if record:
         env = gym.make(
             "SeleniumEnv-v0",
-            start_url="https://www.amazon.com",
-            # start_url="https://www.google.com/flights",
+            start_url=website_config["start_url"],
             headless=os.environ.get("HEADLESS", "true").lower() == "true",
-            # recipes=google_flights_recipes.recipes,
-            recipes=amazon_recipes.recipes,
+            recipes=website_config["recipes"],
             start_callback=lambda x: (
-                solve_captcha(x),
+                solve_captcha(x) if website_config["solve_captcha"] else None,
                 start_recording(f"{output}/recording.mp4"),
             ),
             end_callback=lambda x: stop_recording,
@@ -165,12 +195,10 @@ async def main(
     else:
         env = gym.make(
             "SeleniumEnv-v0",
-            start_url="https://www.amazon.com",
-            # start_url="https://www.google.com/flights",
+            start_url=website_config["start_url"],
             headless=os.environ.get("HEADLESS", "true").lower() == "true",
-            # recipes=google_flights_recipes.recipes,
-            recipes=amazon_recipes.recipes,
-            start_callback=solve_captcha,
+            recipes=website_config["recipes"],
+            start_callback=solve_captcha if website_config["solve_captcha"] else lambda x: None,
             end_callback=lambda x: print("end with ", x),
         )
     num_steps = 0
@@ -179,7 +207,7 @@ async def main(
     try:
         if cookie:
             # save cookie
-            with open(f"{output}/cookies.json", "w") as f:
+            with open(f"{output}/cookie.json", "w") as f:
                 json.dump(cookie, f)
             env.browser.driver.add_cookie({"name": cookie[0], "value": cookie[1]})
 
