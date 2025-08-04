@@ -24,6 +24,9 @@ from ..executor.env import (
     Browser,  # noqa
     SeleniumEnv,  # noqa
 )
+# Add AgentQL imports
+from ..executor.agentql_env import AgentQLUniversalAgent
+
 from .model import AgentPolicy, HumanPolicy, OpenAIPolicy  # noqa  # noqa
 
 # Website configurations
@@ -41,6 +44,12 @@ WEBSITE_CONFIGS = {
     "google_flights": {
         "start_url": "https://www.google.com/flights",
         "recipes": google_flights_recipes.recipes,
+        "solve_captcha": False,
+    },
+    # Universal AgentQL configuration - works on ANY website!
+    "universal": {
+        "start_url": None,  # Will be set dynamically
+        "recipes": None,    # No recipes needed!
         "solve_captcha": False,
     },
 }
@@ -129,6 +138,70 @@ def stop_recording(result=None):
     recording_process.send_signal(signal.SIGINT)
 
 
+async def run_agentql_automation(persona_data: dict, intent: str, target_url: str, output: str, max_steps: int):
+    """
+    Run AgentQL universal web automation.
+    This is your breakthrough feature - works on ANY website!
+    """
+    print(f"🚀 Starting AgentQL Universal Web Automation")
+    print(f"   Target URL: {target_url}")
+    print(f"   Persona: {type(persona_data).__name__} - {str(persona_data)[:100]}...")
+    print(f"   Goal: {intent}")
+    print("-" * 80)
+    
+    # Create output directory
+    os.makedirs(output, exist_ok=True)
+    
+    # Prepare persona with goal
+    persona_with_goal = {
+        "description": persona_data,
+        "goal": intent,
+        "target_url": target_url
+    }
+    
+    # Initialize AgentQL Universal Agent
+    headless = os.environ.get("HEADLESS", "true").lower() == "true"
+    agent = AgentQLUniversalAgent(headless=headless)
+    
+    try:
+        # Run the automation
+        print("🤖 Starting persona-based automation...")
+        result = await agent.run_persona_task(persona_with_goal, target_url)
+        
+        if result["success"]:
+            print("✅ Automation completed successfully!")
+            print(f"   Steps executed: {result['total_steps']}")
+            print(f"   Final URL: {result.get('final_data', {}).get('url', target_url)}")
+            
+            # Save results
+            results_file = os.path.join(output, "agentql_results.json")
+            with open(results_file, "w") as f:
+                json.dump(result, f, indent=2, default=str)
+            
+            print(f"   Results saved to: {results_file}")
+            
+        else:
+            print("❌ Automation failed:")
+            print(f"   Error: {result.get('error', 'Unknown error')}")
+            
+            # Save error details
+            error_file = os.path.join(output, "agentql_error.json")
+            with open(error_file, "w") as f:
+                json.dump(result, f, indent=2, default=str)
+    
+    except Exception as e:
+        print(f"💥 Critical error during automation: {e}")
+        print(traceback.format_exc())
+        
+        # Save error details
+        error_file = os.path.join(output, "agentql_critical_error.txt")
+        with open(error_file, "w") as f:
+            f.write(f"Critical Error: {e}\n\n")
+            f.write(traceback.format_exc())
+    
+    print("\n🏁 AgentQL automation completed")
+
+
 @click.command()
 @click.option("--persona", type=str, help="Path to the persona file.", required=True)
 @click.option("--output", type=str, help="Path to the output file.", required=True)
@@ -145,9 +218,23 @@ def stop_recording(result=None):
 @click.option("--llm-provider", type=click.Choice(["openai", "aws"]), default="aws")
 @click.option(
     "--website",
-    type=click.Choice(["amazon", "bruvi", "google_flights"]),
+    type=click.Choice(["amazon", "bruvi", "google_flights", "universal"]),
     default="amazon",
-    help="Which ecommerce website to test (amazon, bruvi, or google_flights)"
+    help="Which website to test (amazon, bruvi, google_flights, or universal for AgentQL)"
+)
+@click.option(
+    "--target-url",
+    type=str,
+    help="Target URL for universal AgentQL mode (required when using --website universal)",
+    default=None
+)
+@click.option(
+    "--use-agentql",
+    is_flag=True,
+    show_default=True,
+    default=False,
+    type=bool,
+    help="Use AgentQL for universal web automation (works on any website)",
 )
 @make_sync
 async def main(
@@ -158,6 +245,8 @@ async def main(
     record: bool,
     llm_provider: str,
     website: str,
+    target_url: str,
+    use_agentql: bool,
 ):
 
     load_dotenv()
@@ -172,10 +261,19 @@ async def main(
     gpt.provider = llm_provider
 
     persona_info = json.load(open(persona))
-    persona = persona_info["persona"]
+    persona_data = persona_info["persona"]
     intent = persona_info["intent"]
 
-    policy = AgentPolicy(persona, intent, output)
+    # Check if using AgentQL universal mode
+    if use_agentql or website == "universal":
+        if not target_url:
+            raise click.ClickException("--target-url is required when using AgentQL universal mode")
+        
+        # Run AgentQL universal automation
+        await run_agentql_automation(persona_data, intent, target_url, output, max_steps)
+        return
+
+    policy = AgentPolicy(persona_data, intent, output)
 
     # Get website configuration
     website_config = WEBSITE_CONFIGS[website]

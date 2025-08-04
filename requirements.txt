@@ -40,4 +40,8 @@ websocket-client==1.8.0
 widgetsnbextension==4.0.13
 wsproto==1.2.0
 ipython==8.18.1
-matplotlib-inline==0.1.7 
+matplotlib-inline==0.1.7
+# AgentQL Dependencies
+agentql==1.0.11
+playwright==1.47.0
+playwright-stealth==1.0.6 
