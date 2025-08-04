@@ -56,13 +56,18 @@ class AgentQLEnv:
                     '--disable-blink-features=AutomationControlled',
                     '--disable-extensions',
                     '--disable-plugins-discovery',
-                    '--start-maximized'
+                    '--start-maximized',
+                    '--high-dpi-support=1',
+                    '--force-device-scale-factor=2',
+                    '--window-size=1440,900',
+                    '--window-position=0,0'
                 ]
             )
             
-            # Create context with realistic settings
+            # Create context with realistic settings - match macOS retina display
             self.context = await self.browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
+                viewport={'width': 1440, 'height': 900},
+                device_scale_factor=2.0,
                 user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
             )
             
@@ -90,6 +95,20 @@ class AgentQLEnv:
             # Navigate with timeout
             await self.agentql_page.goto(url, timeout=self.timeout)
             await self.agentql_page.wait_for_load_state('networkidle')
+            
+            # Fix viewport and zoom issues after page loads
+            await self.agentql_page.evaluate("""
+                () => {
+                    // Reset any zoom or scale transforms
+                    document.body.style.zoom = '1';
+                    document.body.style.transform = 'none';
+                    document.documentElement.style.zoom = '1';
+                    document.documentElement.style.transform = 'none';
+                    
+                    // Scroll to top-left to ensure proper positioning
+                    window.scrollTo(0, 0);
+                }
+            """)
             
             # Get page info
             title = await self.agentql_page.title()
