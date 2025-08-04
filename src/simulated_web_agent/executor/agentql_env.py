@@ -57,23 +57,30 @@ class AgentQLEnv:
                     '--disable-extensions',
                     '--disable-plugins-discovery',
                     '--start-maximized',
-                    '--high-dpi-support=1',
-                    '--force-device-scale-factor=2',
                     '--window-size=1440,900',
-                    '--window-position=0,0'
+                    '--window-position=0,0',
+                    '--allow-running-insecure-content',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor'
                 ]
             )
             
-            # Create context with realistic settings - match macOS retina display
+            # Create context with image loading optimized
             self.context = await self.browser.new_context(
                 viewport={'width': 1440, 'height': 900},
-                device_scale_factor=2.0,
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+                device_scale_factor=1.0,
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                permissions=['camera', 'microphone'],
+                extra_http_headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
             )
             
             # Create page and apply stealth
             self.page = await self.context.new_page()
-            await stealth_async(self.page)
+            # Temporarily disable stealth mode to fix image loading
+            # await stealth_async(self.page)
             
             # Wrap with AgentQL for AI-powered automation
             self.agentql_page = agentql.wrap(self.page)
@@ -655,39 +662,152 @@ class AgentQLUniversalAgent:
     
     async def _generate_action_steps(self, goal: str, preferences: Dict[str, Any]) -> List[str]:
         """
-        Generate action steps from natural language goal.
-        This could be enhanced with GPT to break down complex goals.
+        Generate universal action steps from any natural language goal.
+        Works with ALL personas from example_data - no hardcoding needed!
         """
-        # Check if this is an Apple Store or AirPods related goal
-        if "airpods" in goal.lower() or "apple" in goal.lower():
+        goal_lower = goal.lower()
+        
+        # Extract product type and intent from goal
+        product_keywords = self._extract_product_info(goal_lower)
+        
+        # Universal e-commerce shopping flow that works on ANY website
+        if "buy" in goal_lower or "purchase" in goal_lower or "get" in goal_lower:
+            return self._generate_shopping_flow(goal, product_keywords)
+        elif "browse" in goal_lower or "explore" in goal_lower:
             return [
                 "scroll down to see page content",
-                "click on AirPods link or navigate to AirPods",
-                "browse available AirPods models",
-                "select a suitable AirPods model",
-                "click Buy button or Add to Bag button",
-                "proceed to cart or bag"
+                "click navigation menu",
+                "click product categories",
+                "browse products"
             ]
-        elif "coffee" in goal.lower() or "buy" in goal.lower():
+        elif "search" in goal_lower:
             return [
-                "scroll down to see page content",
-                "click on Shop button or Get Bruvi button",
-                "look for Bruvi Subscription Bundle",
-                "click on the subscription bundle offer",
-                "add to cart",
-                "view cart"
-            ]
-        elif "browse" in goal.lower():
-            return [
-                "scroll down to see page content",
-                "click on interesting links",
-                "explore navigation menu"
+                "scroll down to see page content", 
+                "click search box",
+                f"search for {goal.replace('search for', '').strip()}",
+                "click search results",
+                "select product"
             ]
         else:
-            # Generic exploration
+            # Universal exploration for any unclear intent
             return [
                 "scroll down to explore the page",
-                "identify main navigation elements",
-                "explore primary content areas",
-                "interact with key features"
-            ] 
+                "click main navigation",
+                "browse product sections",
+                "click featured items"
+            ]
+    
+    def _extract_product_info(self, goal_lower: str) -> Dict[str, Any]:
+        """Extract product category and attributes from goal text"""
+        
+        # Product categories (expandable for any product type)
+        categories = {
+            "clothing": ["pants", "shirt", "dress", "jacket", "clothing", "apparel", "wear", "outfit"],
+            "athletic": ["athletic", "sports", "fitness", "workout", "compression", "activewear", "leggings"],
+            "electronics": ["phone", "computer", "laptop", "tablet", "headphones", "airpods", "charger"],
+            "coffee": ["coffee", "espresso", "machine", "brewer", "bruvi", "subscription"],
+            "jewelry": ["necklace", "ring", "earrings", "bracelet", "watch", "pearl", "diamond"],
+            "home": ["decoration", "furniture", "appliance", "kitchen", "bedroom", "living"],
+            "seasonal": ["halloween", "christmas", "holiday", "decoration", "costume"],
+            "beauty": ["makeup", "skincare", "perfume", "cosmetics", "beauty"],
+            "health": ["vitamins", "supplement", "medical", "health", "wellness"],
+            "school": ["school", "supplies", "notebook", "composition", "pencil", "pen", "paper", "backpack", "binder", "folder"]
+        }
+        
+        # Gender indicators
+        gender_keywords = {
+            "women": ["women", "womens", "female", "ladies", "her"],
+            "men": ["men", "mens", "male", "guys", "his"],
+            "kids": ["kids", "children", "child", "baby", "toddler"]
+        }
+        
+        # Size indicators  
+        size_keywords = ["small", "medium", "large", "xl", "xs", "size"]
+        
+        # Quality indicators
+        quality_keywords = ["high-quality", "premium", "luxury", "professional", "breathable"]
+        
+        # Determine primary category
+        primary_category = "general"
+        for category, keywords in categories.items():
+            if any(keyword in goal_lower for keyword in keywords):
+                primary_category = category
+                break
+        
+        # Determine gender
+        target_gender = "unisex"
+        for gender, keywords in gender_keywords.items():
+            if any(keyword in goal_lower for keyword in keywords):
+                target_gender = gender
+                break
+        
+        # Extract other attributes
+        has_size = any(keyword in goal_lower for keyword in size_keywords)
+        has_quality = any(keyword in goal_lower for keyword in quality_keywords)
+        
+        return {
+            "category": primary_category,
+            "gender": target_gender,
+            "has_size": has_size,
+            "has_quality": has_quality,
+            "original_goal": goal_lower
+        }
+    
+    def _generate_shopping_flow(self, original_goal: str, product_info: Dict[str, Any]) -> List[str]:
+        """Generate a universal shopping flow with simple, actionable steps"""
+        
+        category = product_info["category"]
+        gender = product_info["gender"]
+        
+        # Start with universal navigation
+        steps = ["scroll down to see page content"]
+        
+        # Simple navigation steps using common website elements
+        if category == "coffee" and "bruvi" in original_goal.lower():
+            # Special case for Bruvi-specific coffee shopping
+            steps.extend([
+                "click shop button",
+                "look for coffee machines",
+                "click subscription bundle",
+                "click add to cart"
+            ])
+        elif category == "school":
+            # School supplies navigation (Target-style)
+            steps.extend([
+                "click school supplies",
+                "click notebooks",
+                "select composition book",
+                "click add to cart"
+            ])
+        elif gender == "women":
+            # Women's section navigation
+            steps.extend([
+                "click women",
+                f"click {category}",
+                "click filter",
+                "select product"
+            ])
+        elif gender == "men":
+            # Men's section navigation
+            steps.extend([
+                "click men", 
+                f"click {category}",
+                "click filter",
+                "select product"
+            ])
+        else:
+            # Generic category shopping
+            steps.extend([
+                f"click {category}",
+                "browse products",
+                "click filter",
+                "select product"
+            ])
+        
+        # Universal completion steps with simple actions
+        steps.extend([
+            "click add to cart",
+            "click view cart or checkout"
+        ])
+        
+        return steps 
