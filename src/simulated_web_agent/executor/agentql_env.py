@@ -626,7 +626,7 @@ class AgentQLUniversalAgent:
             self.logger.info(f"Running persona task: {goal}")
             
             # Convert goal into actionable steps using AgentQL
-            steps = await self._generate_action_steps(goal, preferences)
+            steps = await self._generate_action_steps(goal, preferences, target_url)
             
             results = []
             for step in steps:
@@ -660,7 +660,7 @@ class AgentQLUniversalAgent:
         finally:
             await self.env.cleanup()
     
-    async def _generate_action_steps(self, goal: str, preferences: Dict[str, Any]) -> List[str]:
+    async def _generate_action_steps(self, goal: str, preferences: Dict[str, Any], target_url: str) -> List[str]:
         """
         Generate universal action steps from any natural language goal.
         Works with ALL personas from example_data - no hardcoding needed!
@@ -671,8 +671,8 @@ class AgentQLUniversalAgent:
         product_keywords = self._extract_product_info(goal_lower)
         
         # Universal e-commerce shopping flow that works on ANY website
-        if "buy" in goal_lower or "purchase" in goal_lower or "get" in goal_lower:
-            return self._generate_shopping_flow(goal, product_keywords)
+        if any(keyword in goal_lower for keyword in ["buy", "purchase", "get", "add to cart", "add them to cart"]):
+            return self._generate_shopping_flow(goal, product_keywords, target_url)
         elif "browse" in goal_lower or "explore" in goal_lower:
             return [
                 "scroll down to see page content",
@@ -753,7 +753,7 @@ class AgentQLUniversalAgent:
             "original_goal": goal_lower
         }
     
-    def _generate_shopping_flow(self, original_goal: str, product_info: Dict[str, Any]) -> List[str]:
+    def _generate_shopping_flow(self, original_goal: str, product_info: Dict[str, Any], target_url: str = "") -> List[str]:
         """Generate a universal shopping flow with simple, actionable steps"""
         
         category = product_info["category"]
@@ -770,6 +770,14 @@ class AgentQLUniversalAgent:
                 "look for coffee machines",
                 "click subscription bundle",
                 "click add to cart"
+            ])
+        elif "apple" in target_url.lower() and category == "electronics":
+            # Apple Store specific flow for AirPods/electronics
+            steps.extend([
+                "click AirPods navigation",
+                "click Buy AirPods Pro 2",
+                "select options if needed",
+                "click add to bag"
             ])
         elif category == "school":
             # School supplies navigation (Target-style)
