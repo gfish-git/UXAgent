@@ -26,12 +26,11 @@ echo ""
 source simulated_web_agent_env/bin/activate
 
 # Run universal automation - works on ANY website!
-simulated_web_agent_env/bin/python -m src.simulated_web_agent.main \
+simulated_web_agent_env/bin/python -m simulated_web_agent.main \
     --persona "$PERSONA_FILE" \
     --output "output/universal_$(date +%Y%m%d_%H%M%S)" \
     --max-steps 25 \
     --llm-provider openai \
-    --website universal \
     --target-url "$TARGET_URL"
 
 echo ""

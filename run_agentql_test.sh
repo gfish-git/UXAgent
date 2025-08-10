@@ -7,12 +7,11 @@ echo "========================================"
 source simulated_web_agent_env/bin/activate
 
 # Test on Bruvi.com with AgentQL (no manual recipes needed!)
-simulated_web_agent_env/bin/python -m src.simulated_web_agent.main \
+simulated_web_agent_env/bin/python -m simulated_web_agent.main \
     --persona example_data/personas/json/bruvi_coffee_shopper.json \
     --output output/agentql_bruvi_test \
     --max-steps 20 \
     --llm-provider openai \
-    --use-agentql \
     --target-url "https://bruvi.com"
 
 echo ""

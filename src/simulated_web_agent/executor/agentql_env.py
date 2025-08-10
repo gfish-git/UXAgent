@@ -5,6 +5,8 @@ import os
 import time
 import traceback
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urljoin, urlparse
+import requests
 
 import agentql
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
@@ -42,46 +44,183 @@ class AgentQLEnv:
         self.max_steps = 50
         
         self.logger = logging.getLogger(__name__)
+
+    def _create_browserbase_session(self, api_key: str, region: str = "us") -> str:
+        """Create a Browserbase session and return its Playwright connect URL.
+
+        Per docs, prefer 'X-BB-API-Key' header and minimal payload with optional 'projectId'.
+        Fallbacks:
+          - try lowercase 'x-bb-api-key'
+          - then Authorization: Bearer
+        Will use 'connectUrl' if present, else fallback to 'wsUrl'.
+        Docs: https://docs.browserbase.com/reference/api/create-a-session
+        """
+        api_base = os.getenv("BROWSERBASE_API_BASE", "https://api.browserbase.com").rstrip("/")
+        project_id = os.getenv("BROWSERBASE_PROJECT_ID")
+
+        payload: Dict[str, Any] = {}
+        if project_id:
+            payload["projectId"] = project_id
+
+        url = f"{api_base}/v1/sessions"
+
+        # Try multiple header conventions to maximize compatibility
+        headers_list = [
+            {"X-BB-API-Key": api_key, "Content-Type": "application/json"},
+            {"x-bb-api-key": api_key, "Content-Type": "application/json"},
+            {"x-api-key": api_key, "Content-Type": "application/json"},
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        ]
+        last_resp = None
+        for headers in headers_list:
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            last_resp = resp
+            if 200 <= resp.status_code < 300:
+                break
+
+        if not last_resp or not (200 <= last_resp.status_code < 300):
+            err_text = getattr(last_resp, "text", "<no body>") if last_resp is not None else "<no response>"
+            raise requests.HTTPError(f"Browserbase session create failed: {getattr(last_resp,'status_code', 'NA')} {err_text}")
+
+        data = last_resp.json()
+        # Preferred field per docs
+        connect_url = data.get("connectUrl")
+        if connect_url:
+            return connect_url
+        # Backward/alt compatibility
+        ws_url = data.get("wsUrl")
+        if ws_url:
+            return ws_url
+        raise RuntimeError("Browserbase API response missing connectUrl/wsUrl")
     
     async def setup(self):
         """Initialize the AgentQL environment"""
         try:
             self.playwright = await async_playwright().start()
             
-            # Launch browser with stealth mode
-            self.browser = await self.playwright.chromium.launch(
-                headless=self.headless,
-                args=[
-                    '--no-sandbox',
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-extensions',
-                    '--disable-plugins-discovery',
-                    '--start-maximized',
-                    '--window-size=1440,900',
-                    '--window-position=0,0',
-                    '--allow-running-insecure-content',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
-                ]
+            # Connect to Browserbase via CDP. Local browser fallback is removed.
+            using_remote_cdp = False
+            ws_endpoint = os.getenv("BROWSERBASE_WS_ENDPOINT")
+            api_key = os.getenv("BROWSERBASE_API_KEY")
+            project_id_dbg = os.getenv("BROWSERBASE_PROJECT_ID")
+
+            # Safe diagnostics (no secret values)
+            self.logger.info(
+                "Browserbase env: ws_endpoint=%s, api_key_present=%s, project_id_present=%s",
+                bool(ws_endpoint), bool(api_key), bool(project_id_dbg)
             )
+
+            # If no explicit WS endpoint but API key exists, create a session programmatically
+            if not ws_endpoint and api_key:
+                try:
+                    ws_endpoint = self._create_browserbase_session(api_key)
+                    # Cache into env for this process so subsequent components can see it
+                    os.environ["BROWSERBASE_WS_ENDPOINT"] = ws_endpoint
+                    self.logger.info("Created Browserbase session via API and set BROWSERBASE_WS_ENDPOINT")
+                except Exception as create_err:
+                    self.logger.warning(f"Failed to create Browserbase session via API: {create_err}")
+            if ws_endpoint:
+                try:
+                    self.logger.info(f"Connecting to remote browser via CDP: {ws_endpoint}")
+                    self.browser = await self.playwright.chromium.connect_over_cdp(ws_endpoint)
+                    using_remote_cdp = True
+                    self.logger.info("Connected to remote browser via CDP (Browserbase)")
+                except Exception as cdp_err:
+                    self.logger.warning(
+                        f"Failed to connect to remote CDP endpoint ({ws_endpoint}): {cdp_err}."
+                    )
+                    # Attempt to create a fresh session if we have API key
+                    if api_key:
+                        try:
+                            self.logger.info("Attempting to create a fresh Browserbase session via API...")
+                            ws_endpoint = self._create_browserbase_session(api_key)
+                            os.environ["BROWSERBASE_WS_ENDPOINT"] = ws_endpoint
+                            self.browser = await self.playwright.chromium.connect_over_cdp(ws_endpoint)
+                            using_remote_cdp = True
+                            self.logger.info("Connected to remote browser via CDP (Browserbase) on retry")
+                        except Exception as retry_err:
+                            self.logger.error(
+                                f"Retrying with fresh Browserbase session failed: {retry_err}."
+                            )
+
+            # Enforce Browserbase-only mode
+            if not using_remote_cdp:
+                raise RuntimeError(
+                    "Browserbase connection required. Set BROWSERBASE_WS_ENDPOINT or BROWSERBASE_API_KEY (and optional BROWSERBASE_PROJECT_ID) to auto-create a session."
+                )
             
-            # Create context with image loading optimized
-            self.context = await self.browser.new_context(
-                viewport={'width': 1440, 'height': 900},
-                device_scale_factor=1.0,
-                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                permissions=['camera', 'microphone'],
-                extra_http_headers={
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9'
-                }
-            )
+            # Create or reuse context with image loading optimized
+            if self.browser.contexts:
+                # Reuse existing context (useful for persistent remote sessions)
+                self.context = self.browser.contexts[0]
+                self.logger.info("Reusing existing browser context")
+            else:
+                self.context = await self.browser.new_context(
+                    viewport={'width': 1440, 'height': 900},
+                    device_scale_factor=1.0,
+                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                    permissions=['camera', 'microphone'],
+                    extra_http_headers={
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9'
+                    }
+                )
+
+            # Block ad/analytics heavy third-party requests to speed up page readiness
+            blocked_domains = [
+                'googlesyndication.com',
+                'doubleclick.net',
+                'g.doubleclick.net',
+                'google-analytics.com',
+                'googletagmanager.com',
+                'facebook.net',
+                'google.com/recaptcha',
+                'safeframe.googlesyndication.com',
+                'adservice.google.com',
+            ]
+
+            async def route_handler(route):
+                try:
+                    req = route.request
+                    url = req.url
+                    host = urlparse(url).hostname or ""
+                    if any(domain in url or domain in host for domain in blocked_domains):
+                        await route.abort()
+                    else:
+                        await route.continue_()
+                except Exception:
+                    try:
+                        await route.continue_()
+                    except Exception:
+                        pass
+
+            try:
+                await self.context.route("**/*", route_handler)
+                self.logger.info("Enabled network routing to block ad/analytics domains")
+            except Exception as e:
+                self.logger.warning(f"Failed to enable network routing: {e}")
             
-            # Create page and apply stealth
-            self.page = await self.context.new_page()
+            # Create or reuse a visible page and bring to front (helps live viewers)
+            if self.context.pages:
+                self.page = self.context.pages[0]
+                self.logger.info("Reusing existing page in context")
+            else:
+                self.page = await self.context.new_page()
+                self.logger.info("Created new page in context")
+            try:
+                await self.page.bring_to_front()
+            except Exception:
+                pass
             # Temporarily disable stealth mode to fix image loading
             # await stealth_async(self.page)
             
+            # Make navigation/timeouts more forgiving
+            try:
+                await self.page.set_default_navigation_timeout(self.timeout * 2)
+                await self.page.set_default_timeout(self.timeout * 2)
+            except Exception:
+                pass
+
             # Wrap with AgentQL for AI-powered automation
             self.agentql_page = agentql.wrap(self.page)
             
@@ -99,9 +238,29 @@ class AgentQLEnv:
             
             self.logger.info(f"Navigating to: {url}")
             
-            # Navigate with timeout
-            await self.agentql_page.goto(url, timeout=self.timeout)
-            await self.agentql_page.wait_for_load_state('networkidle')
+            # Navigate with robust strategy: force about:blank first for live viewer, then goto
+            try:
+                await self.page.goto("about:blank", timeout=5000)
+            except Exception:
+                pass
+            # Navigate with more robust strategy: wait for DOMContentLoaded first
+            await self.agentql_page.goto(
+                url,
+                timeout=self.timeout * 2,
+                wait_until='domcontentloaded'
+            )
+
+            # Soft-wait for additional network settling without hard failing
+            try:
+                await self.agentql_page.wait_for_load_state('load', timeout=8000)
+            except Exception:
+                # Ignore if 'load' doesn't occur quickly; proceed with DOM ready
+                pass
+            try:
+                # Some sites keep long polling; keep this short and best-effort
+                await self.agentql_page.wait_for_load_state('networkidle', timeout=3000)
+            except Exception:
+                pass
             
             # Fix viewport and zoom issues after page loads
             await self.agentql_page.evaluate("""
@@ -182,7 +341,10 @@ class AgentQLEnv:
             
             try:
                 # Use AgentQL to execute the action based on content analysis
-                if any(keyword in instruction_lower for keyword in ["click", "tap", "press", "select", "choose"]):
+                # Handle keyboard submit before generic "press" keywords
+                if "press enter" in instruction_lower or "submit search" in instruction_lower or instruction_lower == "submit":
+                    await self._handle_navigation_action(instruction_str)
+                elif any(keyword in instruction_lower for keyword in ["click", "tap", "press", "select", "choose"]):
                     # Handle click-like actions
                     await self._handle_click_action(instruction_str)
                 elif any(keyword in instruction_lower for keyword in ["fill", "type", "enter", "input", "write"]):
@@ -355,11 +517,52 @@ class AgentQLEnv:
             
             if elements and hasattr(elements, clean_description):
                 target_element = getattr(elements, clean_description)
-                if target_element:
-                    await target_element.click()
-                    self.logger.info(f"Successfully clicked element: {element_description}")
-                else:
+                if not target_element:
                     raise Exception(f"Element {clean_description} was None")
+
+                # Robust click: wait, scroll, retry, and fallback to href navigation
+                click_error = None
+                for attempt in range(2):
+                    try:
+                        try:
+                            await target_element.wait_for(state="visible", timeout=5000)
+                        except Exception:
+                            pass
+                        try:
+                            await target_element.scroll_into_view_if_needed()
+                        except Exception:
+                            pass
+                        await target_element.click()
+                        self.logger.info(f"Successfully clicked element: {element_description}")
+                        click_error = None
+                        break
+                    except Exception as e:
+                        click_error = e
+                        # Re-query the element to avoid stale handles
+                        elements = await self.agentql_page.query_elements(query)
+                        target_element = getattr(elements, clean_description, None)
+
+                if click_error:
+                    # Fallback: if it's a link, navigate directly
+                    try:
+                        href = None
+                        try:
+                            href = await target_element.get_attribute("href")
+                        except Exception:
+                            href = None
+                        if href:
+                            dest = urljoin(self.agentql_page.url, href)
+                            await self.agentql_page.goto(dest, timeout=self.timeout, wait_until='domcontentloaded')
+                            self.logger.info(f"Navigated directly to href: {dest}")
+                        else:
+                            # Last resort: JS click
+                            try:
+                                await self.agentql_page.evaluate("el => el.click()", target_element)
+                                self.logger.info("Clicked via JS evaluate")
+                            except Exception:
+                                raise click_error
+                    except Exception:
+                        raise click_error
             else:
                 # Try alternative approach with generic button/link query
                 try:
@@ -412,6 +615,9 @@ class AgentQLEnv:
             parts = instruction_str.split("with")
             field_desc = parts[0].replace("fill", "").strip()
             value = parts[1].strip() if len(parts) > 1 else ""
+            # Strip wrapping quotes if present
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
             
             # Clean up the description
             field_desc = field_desc.replace('"', '').replace("'", "").replace(":", "")
@@ -544,6 +750,16 @@ class AgentQLEnv:
                 # Default scroll down
                 await self.agentql_page.evaluate("window.scrollBy(0, 300)")
                 self.logger.info("Scrolled (default down)")
+        elif "press enter" in instruction_lower or "submit search" in instruction_lower or instruction_lower == "submit":
+            # Submit current focused form or search
+            try:
+                await self.page.keyboard.press("Enter")
+            except Exception:
+                pass
+            try:
+                await self.agentql_page.wait_for_load_state('load', timeout=10000)
+            except Exception:
+                pass
         elif "navigate" in instruction_lower or "go to" in instruction_lower:
             # For now, treat as a click action (navigate by clicking links)
             await self._handle_click_action(instruction_str)
@@ -662,160 +878,38 @@ class AgentQLUniversalAgent:
     
     async def _generate_action_steps(self, goal: str, preferences: Dict[str, Any], target_url: str) -> List[str]:
         """
-        Generate universal action steps from any natural language goal.
-        Works with ALL personas from example_data - no hardcoding needed!
+        Generate universal action steps from any natural language goal using a search-first strategy.
+        Avoids site- or category-specific branching to maximize generality.
         """
-        goal_lower = goal.lower()
-        
-        # Extract product type and intent from goal
-        product_keywords = self._extract_product_info(goal_lower)
-        
-        # Universal e-commerce shopping flow that works on ANY website
-        if any(keyword in goal_lower for keyword in ["buy", "purchase", "get", "add to cart", "add them to cart"]):
-            return self._generate_shopping_flow(goal, product_keywords, target_url)
-        elif "browse" in goal_lower or "explore" in goal_lower:
+        goal_lower = goal.lower().strip()
+
+        # Determine intent category with minimal heuristics
+        is_shopping_intent = any(k in goal_lower for k in ["buy", "purchase", "get", "add to cart", "add them to cart"]) or "search" in goal_lower
+
+        # Extract a simple search phrase from the goal when possible
+        cleaned_goal = goal.strip()
+        for token in ["buy", "purchase", "get", "add to cart", "add them to cart", "search for"]:
+            cleaned_goal = cleaned_goal.replace(token, "").strip()
+        # Fallback to original goal if cleaning yields nothing
+        if not cleaned_goal:
+            cleaned_goal = goal.strip()
+
+        if is_shopping_intent:
             return [
-                "scroll down to see page content",
-                "click navigation menu",
-                "click product categories",
-                "browse products"
-            ]
-        elif "search" in goal_lower:
-            return [
-                "scroll down to see page content", 
                 "click search box",
-                f"search for {goal.replace('search for', '').strip()}",
-                "click search results",
-                "select product"
+                f"fill search box with \"{cleaned_goal}\"",
+                "press enter or submit search",
+                "select product",
+                "click add to cart",
+                "click view cart or checkout",
             ]
-        else:
-            # Universal exploration for any unclear intent
-            return [
-                "scroll down to explore the page",
-                "click main navigation",
-                "browse product sections",
-                "click featured items"
-            ]
+
+        # Generic exploration when intent is unclear or informational
+        return [
+            "scroll down to explore the page",
+            "click main navigation",
+            "browse product sections",
+            "click featured items",
+        ]
     
-    def _extract_product_info(self, goal_lower: str) -> Dict[str, Any]:
-        """Extract product category and attributes from goal text"""
-        
-        # Product categories (expandable for any product type)
-        categories = {
-            "clothing": ["pants", "shirt", "dress", "jacket", "clothing", "apparel", "wear", "outfit"],
-            "athletic": ["athletic", "sports", "fitness", "workout", "compression", "activewear", "leggings"],
-            "electronics": ["phone", "computer", "laptop", "tablet", "headphones", "airpods", "charger"],
-            "coffee": ["coffee", "espresso", "machine", "brewer", "bruvi", "subscription"],
-            "jewelry": ["necklace", "ring", "earrings", "bracelet", "watch", "pearl", "diamond"],
-            "home": ["decoration", "furniture", "appliance", "kitchen", "bedroom", "living"],
-            "seasonal": ["halloween", "christmas", "holiday", "decoration", "costume"],
-            "beauty": ["makeup", "skincare", "perfume", "cosmetics", "beauty"],
-            "health": ["vitamins", "supplement", "medical", "health", "wellness"],
-            "school": ["school", "supplies", "notebook", "composition", "pencil", "pen", "paper", "backpack", "binder", "folder"]
-        }
-        
-        # Gender indicators
-        gender_keywords = {
-            "women": ["women", "womens", "female", "ladies", "her"],
-            "men": ["men", "mens", "male", "guys", "his"],
-            "kids": ["kids", "children", "child", "baby", "toddler"]
-        }
-        
-        # Size indicators  
-        size_keywords = ["small", "medium", "large", "xl", "xs", "size"]
-        
-        # Quality indicators
-        quality_keywords = ["high-quality", "premium", "luxury", "professional", "breathable"]
-        
-        # Determine primary category
-        primary_category = "general"
-        for category, keywords in categories.items():
-            if any(keyword in goal_lower for keyword in keywords):
-                primary_category = category
-                break
-        
-        # Determine gender
-        target_gender = "unisex"
-        for gender, keywords in gender_keywords.items():
-            if any(keyword in goal_lower for keyword in keywords):
-                target_gender = gender
-                break
-        
-        # Extract other attributes
-        has_size = any(keyword in goal_lower for keyword in size_keywords)
-        has_quality = any(keyword in goal_lower for keyword in quality_keywords)
-        
-        return {
-            "category": primary_category,
-            "gender": target_gender,
-            "has_size": has_size,
-            "has_quality": has_quality,
-            "original_goal": goal_lower
-        }
-    
-    def _generate_shopping_flow(self, original_goal: str, product_info: Dict[str, Any], target_url: str = "") -> List[str]:
-        """Generate a universal shopping flow with simple, actionable steps"""
-        
-        category = product_info["category"]
-        gender = product_info["gender"]
-        
-        # Start with universal navigation
-        steps = ["scroll down to see page content"]
-        
-        # Simple navigation steps using common website elements
-        if category == "coffee" and "bruvi" in original_goal.lower():
-            # Special case for Bruvi-specific coffee shopping
-            steps.extend([
-                "click shop button",
-                "look for coffee machines",
-                "click subscription bundle",
-                "click add to cart"
-            ])
-        elif "apple" in target_url.lower() and category == "electronics":
-            # Apple Store specific flow for AirPods/electronics
-            steps.extend([
-                "click AirPods navigation",
-                "click Buy AirPods Pro 2",
-                "select options if needed",
-                "click add to bag"
-            ])
-        elif category == "school":
-            # School supplies navigation (Target-style)
-            steps.extend([
-                "click school supplies",
-                "click notebooks",
-                "select composition book",
-                "click add to cart"
-            ])
-        elif gender == "women":
-            # Women's section navigation
-            steps.extend([
-                "click women",
-                f"click {category}",
-                "click filter",
-                "select product"
-            ])
-        elif gender == "men":
-            # Men's section navigation
-            steps.extend([
-                "click men", 
-                f"click {category}",
-                "click filter",
-                "select product"
-            ])
-        else:
-            # Generic category shopping
-            steps.extend([
-                f"click {category}",
-                "browse products",
-                "click filter",
-                "select product"
-            ])
-        
-        # Universal completion steps with simple actions
-        steps.extend([
-            "click add to cart",
-            "click view cart or checkout"
-        ])
-        
-        return steps 
+    # Removed site/category-specific helpers for true universality

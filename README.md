@@ -61,28 +61,21 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
    pip install -e .
    ```
 
-4. **Install Chrome & Chromedriver:**
-   - Download Chrome and the corresponding [chromedriver](https://googlechromelabs.github.io/chrome-for-testing/#stable).
-   - Configure the chromedriver (example commands for Linux and macOS below).
-
-   **Linux:**
-   ```bash
-   wget https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chromedriver-linux64.zip
-   unzip chromedriver-linux64.zip
-   sudo mv chromedriver /usr/bin/chromedriver
-   sudo chmod +x /usr/bin/chromedriver
-   ```
-
-   **macOS:**
-   ```bash
-   brew install chromedriver
-   xattr -d com.apple.quarantine /opt/homebrew/bin/chromedriver
-   ```
-
-   **Verify Installation:**
-   ```bash
-   chromedriver --version
-   ```
+4. **Browserbase credentials (required):**
+   UXAgent now runs exclusively on Browserbase (remote Chromium over CDP). Provide one of the following:
+   - Set an explicit WebSocket endpoint:
+     ```bash
+     export BROWSERBASE_WS_ENDPOINT="wss://connect.browserbase.com?sessionId=..."
+     ```
+   - Or let the tool create a session via API (preferred):
+     ```bash
+     export BROWSERBASE_API_KEY=bb_XXXX
+     # optional, but recommended to scope usage
+     export BROWSERBASE_PROJECT_ID=3034c893-8a55-4327-beb7-aa4829f70341
+     # optional: override API base or region
+     export BROWSERBASE_API_BASE=https://api.browserbase.com
+     export BROWSERBASE_REGION=us
+     ```
 
 5. **Set API keys:**
    Our UXAgent system supports AWS Claude and OpenAI. You only need to set one of them.
@@ -94,21 +87,27 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
    export OPENAI_API_KEY=sk-123
    ```
 
-6. **Optional: Enable "headful" mode:**
-   By default, Chrome runs in headless mode (no GUI). To view the browser, set the following:
+6. **Optional: Headful mode:**
+   Browserbase sessions can be headless or headful depending on your session configuration. You can still set:
    ```bash
    export HEADLESS=false
    ```
+   Note: local browser launch is no longer supported.
 
 ---
 
-## Quick Start
+## Quick Start (Browserbase + AgentQL)
 
 1. **Run the Agent:**
-   We provide 1,000 generated persona in `example_data`. Use the following command to test with a persona and save the output:
+   Provide a target URL and a persona. The agent will connect to Browserbase automatically using the environment variables above.
    ```bash
-   python3 -m simulated_web_agent.main --persona "example_data/personas/json/virtual customer 0.json" --output "output"  --llm-provider openai
+   python3 -m simulated_web_agent.main \
+     --persona "example_data/personas/json/virtual customer 0.json" \
+     --output "output" \
+     --llm-provider openai \
+     --target-url "https://www.amazon.com"
    ```
+   Results are saved under the specified `--output` directory.
 
 2. **Example Persona Format:**
    ```json
@@ -182,6 +181,12 @@ Use the `persona.py` script to generate virtual customer personas based on confi
    ```
 
 Generated personas will be saved in the specified `output_dir` as `.json` and `.txt` files.
+
+---
+
+## Notes on Legacy Modes
+- Local Selenium/Chromedriver-based execution and manual recipe flows have been removed from the CLI. The runtime now uses Playwright over CDP to connect to Browserbase exclusively.
+- Internal recipe modules remain in the repository history but are not used by the current entrypoint.
 
 ---
 
