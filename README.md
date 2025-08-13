@@ -151,6 +151,27 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
    ```
 ---
 
+## Executors and Modes
+
+| Mode | Executor file | Parsing style | Output | Example CLI |
+| --- | --- | --- | --- | --- |
+| agentql | `src/simulated_web_agent/executor/dom_agentql_env.py` | DOM/text (AgentQL) | `agentql_results.json` | ```bash
+python3 -m simulated_web_agent.main --mode agentql --persona example_data/personas/json/virtual\ customer\ 0.json --output output/agentql --llm-provider openai --target-url https://example.com
+``` |
+| computer-use | `src/simulated_web_agent/executor/dom_llm_actions_env.py` | DOM/text (LLM JSON actions) | `computer_use_results.json` | ```bash
+python3 -m simulated_web_agent.main --mode computer-use --persona example_data/personas/json/virtual\ customer\ 0.json --output output/cu --llm-provider openai --target-url https://example.com
+``` |
+| openai-computer-use | `src/simulated_web_agent/executor/openai_computer_use.py` | Vision/screenshot (OpenAI native) | `openai_computer_use_results.json` | ```bash
+OPENAI_API_KEY=... python3 -m simulated_web_agent.main --mode openai-computer-use --persona example_data/personas/json/virtual\ customer\ 0.json --output output/openai_cu --llm-provider openai --target-url https://example.com
+``` |
+| anthropic-computer-use | `src/simulated_web_agent/executor/anthropic_computer_use.py` | Vision/screenshot (Claude; Browserbase bridge executes tool actions) | `anthropic_computer_use_results.json` | ```bash
+ANTHROPIC_API_KEY=... python3 -m simulated_web_agent.main --mode anthropic-computer-use --persona example_data/personas/json/virtual\ customer\ 0.json --output output/anthropic_cu --llm-provider aws --target-url https://example.com
+``` |
+
+**Important:** The OpenAI Computer Use executor requires allowlisted access granted by OpenAI. If your account is not allowlisted for the `computer-use-preview` model, this mode will fail with a 404 `model_not_found` error.
+
+---
+
 ## Generating Personas
 
 Use the `persona.py` script to generate virtual customer personas based on configurations.

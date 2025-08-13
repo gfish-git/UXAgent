@@ -14,6 +14,7 @@ from playwright_stealth import stealth_async
 
 # Import existing components
 from ..agent import context
+from pathlib import Path
 
 
 class AgentQLEnv:
@@ -55,12 +56,16 @@ class AgentQLEnv:
         Will use 'connectUrl' if present, else fallback to 'wsUrl'.
         Docs: https://docs.browserbase.com/reference/api/create-a-session
         """
-        api_base = os.getenv("BROWSERBASE_API_BASE", "https://api.browserbase.com").rstrip("/")
+        api_key = (api_key or "").strip().strip('"').strip("'")
+        api_base = (os.getenv("BROWSERBASE_API_BASE", "https://api.browserbase.com") or "").strip().rstrip("/")
         project_id = os.getenv("BROWSERBASE_PROJECT_ID")
+        region = (os.getenv("BROWSERBASE_REGION") or "").strip()
 
         payload: Dict[str, Any] = {}
         if project_id:
             payload["projectId"] = project_id
+        if region:
+            payload["region"] = region
 
         url = f"{api_base}/v1/sessions"
 
@@ -71,6 +76,12 @@ class AgentQLEnv:
             {"x-api-key": api_key, "Content-Type": "application/json"},
             {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         ]
+        # Also try with project id header if provided
+        if project_id:
+            headers_list.extend([
+                {"X-BB-API-Key": api_key, "X-BB-Project-Id": project_id, "Content-Type": "application/json"},
+                {"x-bb-api-key": api_key, "x-bb-project-id": project_id, "Content-Type": "application/json"},
+            ])
         last_resp = None
         for headers in headers_list:
             resp = requests.post(url, headers=headers, json=payload, timeout=30)
@@ -86,10 +97,19 @@ class AgentQLEnv:
         # Preferred field per docs
         connect_url = data.get("connectUrl")
         if connect_url:
+            # Persist WS endpoint for reuse across processes
+            try:
+                (Path(__file__).resolve().parents[3] / ".browserbase_ws_endpoint").write_text(connect_url)
+            except Exception:
+                pass
             return connect_url
         # Backward/alt compatibility
         ws_url = data.get("wsUrl")
         if ws_url:
+            try:
+                (Path(__file__).resolve().parents[3] / ".browserbase_ws_endpoint").write_text(ws_url)
+            except Exception:
+                pass
             return ws_url
         raise RuntimeError("Browserbase API response missing connectUrl/wsUrl")
     
@@ -100,7 +120,16 @@ class AgentQLEnv:
             
             # Connect to Browserbase via CDP. Local browser fallback is removed.
             using_remote_cdp = False
-            ws_endpoint = os.getenv("BROWSERBASE_WS_ENDPOINT")
+            # Try persisted endpoint first, then env
+            persisted_path = Path(__file__).resolve().parents[3] / ".browserbase_ws_endpoint"
+            ws_endpoint = None
+            try:
+                if persisted_path.exists():
+                    ws_endpoint = persisted_path.read_text().strip()
+            except Exception:
+                pass
+            if not ws_endpoint:
+                ws_endpoint = os.getenv("BROWSERBASE_WS_ENDPOINT")
             api_key = os.getenv("BROWSERBASE_API_KEY")
             project_id_dbg = os.getenv("BROWSERBASE_PROJECT_ID")
 
@@ -221,8 +250,15 @@ class AgentQLEnv:
             except Exception:
                 pass
 
-            # Wrap with AgentQL for AI-powered automation
-            self.agentql_page = agentql.wrap(self.page)
+            # Wrap with AgentQL for AI-powered automation (prefer async wrapper if available)
+            try:
+                if hasattr(agentql, "wrap_async"):
+                    self.agentql_page = await agentql.wrap_async(self.page)  # type: ignore
+                else:
+                    self.agentql_page = agentql.wrap(self.page)
+            except TypeError:
+                # Fallback to sync wrapper if async signature mismatch
+                self.agentql_page = agentql.wrap(self.page)
             
             self.logger.info("AgentQL environment initialized successfully")
             
