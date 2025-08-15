@@ -1,4 +1,4 @@
-<h1 align="center"> [CHI'25 LBW Accepted] UXAgent: An LLM Agent-Based Usability Testing Framework for Web Design </h1>
+<h1 align="center"> Synthetic User for A/B testing </h1>
 
 <p align="center">
     <a href="https://arxiv.org/abs/2502.12561">
@@ -9,9 +9,7 @@
     </a>
 </p>
 
-<p align="center">
-Yuxuan Lu, Bingsheng Yao, Hansu Gu, Jing Huang, Jessie Wang, Laurence Li, Haiyang Zhang, Qi He, Toby Jia-Jun Li, Dakuo Wang
-</p>
+
 
 <p align="center">
     <img src="/figures/teaser.png" width="100%">
@@ -19,12 +17,13 @@ Yuxuan Lu, Bingsheng Yao, Hansu Gu, Jing Huang, Jessie Wang, Laurence Li, Haiyan
 
 
 ## Overview
-**UXAgent** is a framework that uses Large Language Models (LLMs) as agents to conduct usability testing in web environments. These agents simulate human-like behaviors, allowing UX researchers to:
-- Perform early usability evaluations.
-- Gather actionable design insights.
-- Iterate without immediate reliance on human participants.
+**Synthetic User** is a framework for creating AI-powered synthetic users that can simulate realistic human behaviors on websites. This repository provides tools to:
+- Generate diverse user personas with customizable demographics and intents
+- Create automated agents that navigate websites like real users would
+- Conduct A/B testing and usability evaluations with synthetic participants
+- Gather behavioral data and insights without requiring human test subjects
 
-The system leverages dual-system reasoning for quick decisions and in-depth analysis, and its **Universal Web Connector** ensures compatibility with any web page. By offering real-time feedback, UXAgent streamlines the design process and improves testing efficiency.
+The system supports multiple execution modes (AgentQL, Computer Use) and integrates with Browserbase for scalable web automation. Whether you're testing new features, optimizing user flows, or conducting market research, synthetic users provide a cost-effective way to gather user behavior data at scale.
 
 [![Button Click]][Link] 
 
@@ -46,7 +45,8 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
 
 1. **Clone the repository:**
    ```bash
-   git clone git@github.com:xxx/xxx.git
+   git clone https://github.com/YOUR_USERNAME/UXAgent.git
+   cd UXAgent
    ```
 
 2. **Set up the environment:**
@@ -57,12 +57,11 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
 
 3. **Install the package:**
    ```bash
-   cd simulated_web_agent
    pip install -e .
    ```
 
 4. **Browserbase credentials (required):**
-   UXAgent now runs exclusively on Browserbase (remote Chromium over CDP). Provide one of the following:
+   The synthetic user framework runs on Browserbase (remote Chromium over CDP). Provide one of the following:
    - Set an explicit WebSocket endpoint:
      ```bash
      export BROWSERBASE_WS_ENDPOINT="wss://connect.browserbase.com?sessionId=..."
@@ -78,7 +77,7 @@ https://github.com/user-attachments/assets/0c5d22a8-4438-402b-8e6c-2151bdf53bf1
      ```
 
 5. **Set API keys:**
-   Our UXAgent system supports AWS Claude and OpenAI. You only need to set one of them.
+   The system supports AWS Claude and OpenAI. You only need to set one of them.
    - For AWS Claude:
       - https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
    ```bash

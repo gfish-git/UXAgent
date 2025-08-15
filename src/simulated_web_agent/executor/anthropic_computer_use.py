@@ -71,17 +71,16 @@ class AnthropicComputerUseRunner:
                         "display_height_px": 768,
                         "display_number": 1,
                     },
-                    {
-                        "type": "text_editor_20250124",
-                        "name": "str_replace_editor",
-                    },
-                    {
-                        "type": "bash_20250124",
-                        "name": "bash",
-                    },
                 ],
                 messages=[{"role": "user", "content": json.dumps(instruction)}],
                 betas=[beta_tag],
+                system=(
+                    "You are a shopper who is looking to purchase something on a website. "
+                    "Control the browser only via the computer tool. "
+                    "Before acting and after each action, request and review a screenshot. "
+                    "Use precise clicks and short waits. Avoid destructive actions. "
+                    "When the goal is complete, stop issuing tool_use."
+                ),
             )
             try:
                 payload = resp.model_dump()
@@ -106,6 +105,13 @@ class AnthropicComputerUseRunner:
                     ],
                     messages=[{"role": "user", "content": json.dumps(instruction)}],
                     betas=[beta_tag],
+                    system=(
+                        "You are a shopper who is looking to purchase something on a website. "
+                        "Control the browser only via the computer tool. "
+                        "Before acting and after each action, request and review a screenshot. "
+                        "Use precise clicks and short waits. Avoid destructive actions. "
+                        "When the goal is complete, stop issuing tool_use."
+                    ),
                 )
                 try:
                     payload2 = resp2.model_dump()
@@ -149,6 +155,11 @@ class AnthropicComputerUseRunner:
 
         bb = BrowserbaseConnector(timeout=30000, ws_endpoint=ws_ep)
         await bb.setup(headless=os.getenv("HEADLESS", "true").lower() == "true")
+        # Align viewport with advertised display size
+        try:
+            await bb.page.set_viewport_size({"width": 1280, "height": 800})
+        except Exception:
+            pass
         screens_dir = Path(output_dir) / "screens"
         screens_dir.mkdir(parents=True, exist_ok=True)
 
@@ -191,13 +202,7 @@ class AnthropicComputerUseRunner:
                     "display_height_px": 800,
                     "display_number": 1,
                 },
-                {"type": "text_editor_20250124", "name": "str_replace_editor"},
-                {"type": "bash_20250124", "name": "bash"},
             ]
-
-        def screenshot_png_b64() -> str:
-            # This wrapper will be awaited at call site
-            return ""
 
         step = 0
         results: List[Dict[str, Any]] = []
@@ -215,6 +220,13 @@ class AnthropicComputerUseRunner:
                     tools=build_tools(),
                     messages=history,
                     betas=[beta_tag],
+                    system=(
+                        "You are a shopper who is looking to purchase something on a website. "
+                        "Control the browser only via the computer tool. "
+                        "Before acting and after each action, request and review a screenshot. "
+                        "Use precise clicks and short waits. Avoid destructive actions. "
+                        "When the goal is complete, stop issuing tool_use."
+                    ),
                 )
 
                 # Normalize assistant content blocks and extract tool_uses
@@ -309,6 +321,26 @@ class AnthropicComputerUseRunner:
                                 await bb.page.mouse.move(float(x), float(y))
                             else:
                                 result_text = "missing-coordinates"
+                        elif action in ("right_click", "context_click"):
+                            x = tu_input.get("x") or (tu_input.get("position") or {}).get("x")
+                            y = tu_input.get("y") or (tu_input.get("position") or {}).get("y")
+                            coord = tu_input.get("coordinate") or tu_input.get("coordinates")
+                            if (x is None or y is None) and isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                                x = coord[0]
+                                y = coord[1]
+                            if x is not None and y is not None:
+                                logger.info(f"[CU] right click at ({x}, {y})")
+                                await bb.page.mouse.click(float(x), float(y), button="right")
+                            else:
+                                result_text = "missing-coordinates"
+                        elif action in ("hover",):
+                            x = tu_input.get("x") or (tu_input.get("position") or {}).get("x")
+                            y = tu_input.get("y") or (tu_input.get("position") or {}).get("y")
+                            if x is not None and y is not None:
+                                logger.info(f"[CU] hover at ({x}, {y})")
+                                await bb.page.mouse.move(float(x), float(y))
+                            else:
+                                result_text = "missing-coordinates"
                         elif action in ("type", "keyboard_type"):
                             text = tu_input.get("text") or tu_input.get("value") or ""
                             logger.info(f"[CU] type text len={len(text)}")
@@ -327,10 +359,23 @@ class AnthropicComputerUseRunner:
                             ms = int(tu_input.get("ms") or 1000)
                             logger.info(f"[CU] wait {ms}ms")
                             await bb.page.wait_for_timeout(ms)
+                        elif action in ("back", "go_back"):
+                            logger.info("[CU] browser go back")
+                            await bb.page.go_back()
+                        elif action in ("forward", "go_forward"):
+                            logger.info("[CU] browser go forward")
+                            await bb.page.go_forward()
+                        elif action in ("reload", "refresh"):
+                            logger.info("[CU] browser reload")
+                            await bb.page.reload()
                         else:
                             result_text = f"unsupported-action:{action}"
 
                         # After each action, capture a small screenshot for trace
+                        try:
+                            await bb.page.wait_for_timeout(200)
+                        except Exception:
+                            pass
                         if img_b64 is None:
                             png2 = await bb.page.screenshot(full_page=False)
                             img_b64 = base64.b64encode(png2).decode("ascii")
